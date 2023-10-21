@@ -1,9 +1,9 @@
 import telebot
 import requests
 import pyimgur
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import os
-import io
+from io import BytesIO
 from dotenv import load_dotenv
 
 # Load environment variables from the .env file
@@ -11,8 +11,7 @@ load_dotenv()
 
 # Read the Telegram token from the .env file
 TOKEN = os.getenv('TOKEN')
-IMGUR_CLIENT_ID = os.getenv('IMGUR_CLIENT_ID')
-IMGUR_CLIENT_SECRET = os.getenv('IMGUR_CLIENT_SECRET')
+
 
 # Create a bot instance
 bot = telebot.TeleBot(TOKEN)
@@ -41,25 +40,15 @@ def add_todo(message):
         bot.reply_to(message, "You must specify the todo text. For example: /todo Buy groceries.")
 
 
-
 # Comando /list
 @bot.message_handler(commands=['list'])
 def list_todo(message):
     with open(TODO_FILE, 'r') as file:
         todos = file.read()
     if todos:
-        formatted_message = f"```\n{todos}\n```"
-        bot.reply_to(message, "Generating an image with your todo list...")
-
-        # Create an image with Carbon
-        carbon_url = create_carbon_image(todos)
-        if carbon_url:
-            image = requests.get(carbon_url)
-            image_buffer = io.BytesIO(image.content)
-            image_buffer.name = "todo.png"
-
-            # Send the image to the user
-            bot.send_photo(message.chat.id, image_buffer)
+        image = create_image_with_text(todos)
+        if image:
+            bot.send_photo(message.chat.id, image)
         else:
             bot.reply_to(message, "Unable to generate the image with your todo list.")
     else:
@@ -82,6 +71,17 @@ def remove_todo(message):
     except ValueError:
         bot.reply_to(message, "Use /tododel followed by a valid number.")
 
+# Comando /clear
+@bot.message_handler(commands=['clear'])
+def clear_todos(message):
+    try:
+        with open(TODO_FILE, 'w') as file:
+            file.truncate(0)  # Svuota il file
+        bot.reply_to(message, "All todos have been cleared.")
+    except Exception as e:
+        bot.reply_to(message, "An error occurred while clearing todos.")
+
+
 # Command /help
 @bot.message_handler(commands=['help'])
 def help(message):
@@ -99,34 +99,43 @@ Feel free to use these commands to stay organized and manage your tasks. Enjoy u
     """
     bot.reply_to(message, help_message, parse_mode="Markdown")
 
-# Function to create an image with Carbon
-# Function to create an image with Carbon
-def create_carbon_image(code):
-    carbon_url = None
+# Function to create a customized image with bold text (Markdown-style)
+def create_image_with_text(text):
     try:
-        carbon_api_url = 'https://carbonara.vercel.app/api/cook'
-        payload = {
-            'code': code,
-            'backgroundColor': 'rgba(255,255,255,1)',
-            't': 'material',
-        }
-        response = requests.post(carbon_api_url, json=payload)
-        if response.status_code == 200:
-            img_data = response.content
-            img = Image.open(io.BytesIO(img_data))
-            img.save('carbon.png')
+        # Calculate image size based on text length
+        image_width = 600  # Minimum width
+        image_height = max(400, len(text) * 10)  # Adjust height based on text length
 
-            im = pyimgur.Imgur(IMGUR_CLIENT_ID, IMGUR_CLIENT_SECRET)
-            uploaded_image = im.upload_image('carbon.png', title="Todo List")
-            carbon_url = uploaded_image.link
-        else:
-            print("Carbon service returned status code:", response.status_code)
+        # Create an image with a custom background color (grayish)
+        img = Image.new('RGB', (image_width, image_height), color='#1a1717')  # Grayish background
+
+        # Create a drawing context
+        d = ImageDraw.Draw(img)
+
+        # Use a custom font (you can provide the path to a specific font file)
+        font = ImageFont.truetype("arial.ttf", 20)  # Replace with the path to your custom font file
+
+        # Text colors
+        title_color = '#FF5733'  # Title "TODO" color (orange)
+        todo_color = '#1E8449'   # Todo text color (green)
+
+        # Format the text as bold (Markdown-style)
+        text = text.replace('**', '')  # Remove existing bold formatting (if any)
+        text = text.replace('*', '**')  # Apply Markdown-style bold formatting
+
+        # Draw text on the image with Markdown-style formatting
+        d.text((10, 10), "TODO", font=font, fill=title_color)
+        d.text((10, 40), text, font=font, fill=todo_color)
+
+        # Save the image to a BytesIO buffer
+        img_bytes = BytesIO()
+        img.save(img_bytes, format='PNG')
+        img_bytes.seek(0)
+        return img_bytes
+
     except Exception as e:
-        print("Error creating a Carbon image:", str(e))
-    return carbon_url
-
-
-
+        print("Error creating the image:", str(e))
+        return None
 
 # Run the bot
 if __name__ == "__main__":

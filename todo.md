@@ -1,4 +1,2 @@
-### TODO- /todo
-- /todo
-- /todo
 - ciao
+- succhia il cazzo
