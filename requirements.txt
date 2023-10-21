@@ -1,5 +1,5 @@
-pyTelegramBotAPI==4.2.1
+﻿pyTelegramBotAPI==4.2.1
 pyimgur
 python-dotenv==0.19.2
-pillow
+pillow==9.5.0
 requests==2.24.0
