@@ -3,3 +3,4 @@ pyimgur
 python-dotenv==0.19.2
 pillow==9.5.0
 requests==2.24.0
+webcolors

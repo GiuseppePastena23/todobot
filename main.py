@@ -2,9 +2,9 @@ import telebot
 import requests
 import pyimgur
 from PIL import Image, ImageDraw, ImageFont
-import os
 from io import BytesIO
-from dotenv import dotenv_values
+from dotenv import dotenv_values, set_key
+from webcolors import name_to_hex
 import textwrap
 
 # Load environment variables from the .env file
@@ -14,46 +14,91 @@ env_data = dotenv_values(env_path)
 # Read the Telegram token from the .env file
 BOT_TOKEN = env_data['TOKEN']
 
-
 # Create a bot instance
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # Name of the file to store todos
 TODO_FILE = "todo.md"
 
+# Initialize colors from .env
+background_color = env_data.get('BACKGROUND_COLOR')
+title_color = env_data.get('TITLE_COLOR')
+text_color = env_data.get('TEXT_COLOR')
+
 # Command /start
 @bot.message_handler(commands=['start'])
 def start(message):
     bot.reply_to(message, "Welcome! Use /todo to add a new todo, /list to generate an image with todos, or /tododel <number> to remove a todo.")
 
-# Comando /todo
+# Comando /setbackgroundcolor
+
+@bot.message_handler(commands=['setbackgroundcolor'])
+def set_background_color(message):
+    user_id = message.from_user.id
+    color_name = message.text.split(' ', 1)[1]
+    try:
+        global background_color
+        background_color = name_to_hex(color_name)
+        write_colors_to_env(background_color, title_color, text_color)  # Aggiorna il file .env
+        bot.reply_to(message, f"Background color set to {color_name} ({background_color})")
+    except ValueError:
+        bot.reply_to(message, f"Invalid color name. Please use a valid color name like 'blue', 'red', etc.")
+
+# Comando /settitlecolor
+@bot.message_handler(commands=['settitlecolor'])
+def set_title_color(message):
+    user_id = message.from_user.id
+    color_name = message.text.split(' ', 1)[1]
+    try:
+        global title_color
+        title_color = name_to_hex(color_name)
+        write_colors_to_env(background_color, title_color, text_color)  # Aggiorna il file .env
+        bot.reply_to(message, f"Title color set to {color_name} ({title_color})")
+    except ValueError:
+        bot.reply_to(message, f"Invalid color name. Please use a valid color name like 'blue', 'red', etc.")
+
+# Comando /settextcolor
+@bot.message_handler(commands=['settextcolor'])
+def set_text_color(message):
+    user_id = message.from_user.id
+    color_name = message.text.split(' ', 1)[1]
+    try:
+        global text_color
+        text_color = name_to_hex(color_name)
+        write_colors_to_env(background_color, title_color, text_color)  # Aggiorna il file .env
+        bot.reply_to(message, f"Text color set to {color_name} ({text_color})")
+    except ValueError:
+        bot.reply_to(message, f"Invalid color name. Please use a valid color name like 'blue', 'red', etc.")
+
+
 # Comando /todo
 @bot.message_handler(commands=['todo'])
 def add_todo(message):
     todo_text = message.text.split('/todo', 1)
     if len(todo_text) > 1:
         todo_text = todo_text[1].strip()
-        if todo_text:
+        if todo_text and todo_text != '/':
             with open(TODO_FILE, 'r') as file:
                 lines = file.readlines()
-            
-            # Calcola il numero da aggiungere (l'ultimo numero nella lista + 1)
-            if lines:
-                last_line = lines[-1]
-                last_number = int(last_line.split(' ', 1)[0].strip())
-                new_number = last_number + 1
-            else:
-                new_number = 1
-            
-            formatted_todo = f"{new_number}. {todo_text}\n"
-            
+
+            # Trova il numero più alto nei todo esistenti
+            existing_numbers = [int(line.split('.')[0].strip()) for line in lines if line.strip() and line[0].isdigit()]
+            new_number = max(existing_numbers) + 1 if existing_numbers else 1
+
+            # Wrap del testo se è troppo lungo
+            max_line_length = 50  # Imposta la lunghezza massima della linea
+            wrapped_todo = textwrap.fill(todo_text, width=max_line_length)
+
+            formatted_todo = f"{new_number}. {wrapped_todo}\n"
+
             with open(TODO_FILE, 'a') as file:
                 file.write(formatted_todo)
-            bot.reply_to(message, f"Todo added: {formatted_todo}")
+            bot.reply_to(message, f"Todo added: {wrapped_todo}")
         else:
             bot.reply_to(message, "You must specify the todo text. For example: /todo Buy groceries.")
     else:
         bot.reply_to(message, "You must specify the todo text. For example: /todo Buy groceries.")
+
 
 # Comando /list
 @bot.message_handler(commands=['list'])
@@ -61,9 +106,14 @@ def list_todo(message):
     with open(TODO_FILE, 'r') as file:
         todos = file.read()
     if todos:
-        image = create_image_with_text(todos)
+        image = create_image_with_todos(todos)
         if image:
-            bot.send_photo(message.chat.id, image)
+            # Invia le immagini come messaggio
+
+            image_bytes = BytesIO()
+            image.save(image_bytes, format='PNG')
+            image_bytes.seek(0)
+            bot.send_photo(message.chat.id, photo=image_bytes)
         else:
             bot.reply_to(message, "Unable to generate the image with your todo list.")
     else:
@@ -76,15 +126,23 @@ def remove_todo(message):
         todo_number = int(message.text.replace('/del ', '').strip())
         with open(TODO_FILE, 'r') as file:
             todos = file.readlines()
+
         if 1 <= todo_number <= len(todos):
-            del todos[todo_number - 1]
+            deleted_todo = todos.pop(todo_number - 1)
+
             with open(TODO_FILE, 'w') as file:
                 file.writelines(todos)
-            bot.reply_to(message, f"Todo number {todo_number} removed.")
+
+            bot.reply_to(message, f"Todo removed: {deleted_todo.strip()}")
         else:
-            bot.reply_to(message, "Invalid todo number.")
+            bot.reply_to(message, "Invalid todo number. Use /del followed by a valid number.")
     except ValueError:
         bot.reply_to(message, "Use /del followed by a valid number.")
+    except FileNotFoundError:
+        bot.reply_to(message, "Todo file not found. Use /todo to add todos.")
+    except Exception as e:
+        bot.reply_to(message, f"An error occurred while removing the todo: {str(e)}")
+
 
 # Comando /clear
 @bot.message_handler(commands=['clear'])
@@ -93,8 +151,10 @@ def clear_todos(message):
         with open(TODO_FILE, 'w') as file:
             file.truncate(0)  # Svuota il file
         bot.reply_to(message, "All todos have been cleared.")
+    except FileNotFoundError:
+        bot.reply_to(message, "The todo file was not found.")
     except Exception as e:
-        bot.reply_to(message, "An error occurred while clearing todos.")
+        bot.reply_to(message, f"An error occurred while clearing todos: {str(e)}")
 
 
 # Command /help
@@ -114,66 +174,63 @@ Feel free to use these commands to stay organized and manage your tasks. Enjoy u
     """
     bot.reply_to(message, help_message, parse_mode="Markdown")
 
+def write_colors_to_env(background, title, text):
+    env_path = '.env'
+    with open(env_path, 'r') as file:
+        lines = file.readlines()
 
-# Function to create a customized image with adjusted width and word wrap
-def create_image_with_text(text):
+    for i in range(len(lines)):
+        if lines[i].startswith('BACKGROUND_COLOR='):
+            lines[i] = f'BACKGROUND_COLOR={background}\n'
+        elif lines[i].startswith('TITLE_COLOR='):
+            lines[i] = f'TITLE_COLOR={title}\n'
+        elif lines[i].startswith('TEXT_COLOR='):
+            lines[i] = f'TEXT_COLOR={text}\n'
+
+    with open(env_path, 'w') as file:
+        file.writelines(lines)
+
+def create_image_with_todos(text):
+    # Crea un oggetto ImageFont per il calcolo delle dimensioni del testo
     try:
-        # Calculate image size based on text length
-        max_image_width = 1000  # Maximum width
-        max_image_height = len(text) * 10 # Maximum height
+        font = ImageFont.truetype("JetBrainsMonoNLNerdFont-Regular.ttf", size=24)
+    except IOError:
+        font = ImageFont.load_default()
 
-        # Create an image with a custom background color (grayish)
-        img = Image.new('RGB', (max_image_width, max_image_height), color='#1a1717')  # Grayish background
+    # Calcola le dimensioni del testo
+    max_line_width = max(font.getsize(line)[0] for line in text.split("\n"))
+    line_height = font.getsize("A")[1]
 
-        # Create a drawing context
-        d = ImageDraw.Draw(img)
+    # Imposta la larghezza fissa dell'immagine
+    image_width = 800  # Larghezza fissa
 
-        # Use a custom font (you can provide the path to a specific font file)
-        font = ImageFont.truetype("JetBrainsMonoNLNerdFont-Regular.ttf", 20)  # Replace with the path to your custom font file
+    # Suddividi il testo in linee separate
+    lines = text.strip().split('\n')
 
-        # Text colors
-        title_color = '#FF5733'  # Title "TODO" color (orange)
-        todo_color = '#1E8449'   # Todo text color (green)
+    # Calcola l'altezza necessaria in base al numero di righe di testo
+    image_height = 100 + line_height * len(lines)
 
-        # Format the text as bold (Markdown-style)
-        text = text.replace('**', '')  # Remove existing bold formatting (if any)
-        text = text.replace('*', '**')  # Apply Markdown-style bold formatting
+    # Crea un'immagine vuota con sfondo colorato
+    image = Image.new("RGB", (image_width, image_height), background_color)
 
-        # Calculate the image width based on the longest line
-        text_width = max(font.getsize(line)[0] for line in text.split('\n'))
+    # Crea un oggetto ImageDraw per disegnare il testo sull'immagine
+    draw = ImageDraw.Draw(image)
 
-        # Ensure the image width doesn't exceed the maximum
-        image_width = min(text_width, max_image_width)
+    # Disegna il titolo "TODO"
+    title_position = (50, 25)
+    title = "TODO"
+    draw.text(title_position, title, fill=title_color, font=font)
 
-        # Create a new image with the adjusted dimensions
-        img = Image.new('RGB', (image_width, max_image_height), color='#1a1717')
+    # Disegna le righe di testo
+    text_position = (50, 75)
+    for line in lines:
+        wrapped_lines = textwrap.wrap(line, width=int(image_width - 100))
+        for wrapped_line in wrapped_lines:
+            draw.text(text_position, wrapped_line, fill=text_color, font=font)
+            text_position = (text_position[0], text_position[1] + line_height)
 
-        # Create a drawing context for the new image
-        d = ImageDraw.Draw(img)
+    return image
 
-        # Draw the title "TODO" in orange
-        d.text((10, 10), "TODO", font=font, fill=title_color)
-
-        # Split and wrap text into lines with word wrap
-        lines = text.split('\n')
-        y = 40
-        for line in lines:
-            wrapped_lines = textwrap.wrap(line, width=40)  # Adjust the width as needed
-            for wrapped_line in wrapped_lines:
-                d.text((10, y), wrapped_line, font=font, fill=todo_color)
-                y += font.getsize(wrapped_line)[1]
-
-        # Save the image to a BytesIO buffer
-        img_bytes = BytesIO()
-        img.save(img_bytes, format='PNG')
-        img_bytes.seek(0)
-        return img_bytes
-
-    except Exception as e:
-        print("Error creating the image:", str(e))
-        return None
-        
-        
 # Run the bot
 if __name__ == "__main__":
     bot.polling()
