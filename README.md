@@ -1,4 +1,3 @@
-Certainly! Here's the updated `README.md` file in English:
 
 # Telegram Todo Bot
 
